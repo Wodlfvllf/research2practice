@@ -279,7 +279,51 @@ class TransformerBlock(nn.Module):
         x = self.norm(x)
         return x
 
-
+class Encoder(nn.Module):
+    def __init__(self,
+                img_size = 64, 
+                patch_size = 4,
+                embed_dim = 128,
+                encoder_depth = 4,
+                hidden_token_length = 16,
+                encoder_heads = 4,
+                in_channels = 3,
+                ):
+        
+        self.img_size = img_size
+        self.patch_size = patch_size
+        self.embed_dim = embed_dim
+        self.encoder_depth = encoder_depth
+        self.decoder_depth = decoder_depth
+        self.hidden_token_length = hidden_token_length
+        self.mlp_ratio = mlp_ratio
+        self.encoder_heads = encoder_heads
+        self.decoder_heads = decoder_heads
+        self.in_channels = in_channels
+        
+        self.patch_embed = PatchEmbedding(self.img_size, self.patch_size, self.in_channels, self.embed_dim)
+        self.num_patches = self.patch_embed.n_patches
+        self.latent_tokens = nn.Parameter(torch.zeros(1, self.hidden_token_length, self.embed_dim), requires_grad = True)
+        self.blocks = nn.ModuleList([
+            TransformerBlock(self.hidden_dim, self.n_heads) for _ in range(self.encoder_depth)
+        ])
+        self.norm_layer = nn.LayerNorm()
+        
+    def forward(self, x):
+        bs, seq_len, hid_dim = x.shape
+        expanded_latent_tokens = self.latent_tokens.expand(bs, -1, -1)
+        combined_input = torch.cat([expanded_latent_tokens, x], dim = 1)
+        for block in self.blocks:
+            combined_input = block(combined_input)
+            
+        return combined_input
+        
+class Decoder(nn.Module):
+    def __init__(self):
+        pass
+    def forward(self):
+        pass
+    
 class Model(nn.Module):
     def __init__(self, 
                 img_size = 64, 
@@ -307,14 +351,15 @@ class Model(nn.Module):
         
         #-------------------------------------------------------------------------------------
         # Encoder Specifics
-        self.patch_embed = PatchEmbedding(self.img_size, self.patch_size, self.in_channels, self.embed_dim)
-        self.num_patches = self.patch_embed.n_patches
-        self.latent_tokens = nn.Parameter(torch.zeros(1, self.hidden_token_length, self.embed_dim), requires_grad = True)
-        self.encoder_pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, embed_dim), requires_grad=True) # we need to choose rotary pos embed
-        self.blocks = nn.ModuleList([
-            TransformerBlock(self.hidden_dim, self.n_heads) for _ in range(self.encoder_depth)
-        ])
-        self.norm_layer = nn.LayerNorm()
+        self.encoder = Encoder(
+            img_size = img_size
+            patch_size = patch_size
+            embed_dim = embed_dim
+            encoder_depth = encoder_depth
+            hidden_token_length = hidden_token_length
+            encoder_heads = encoder_heads
+            in_channels = in_channels
+        )
         
         #--------------------------------------------------------------------------------------
         # Decoder Specifics
