@@ -43,4 +43,40 @@ class Attention(nn.Module):
         return out
     
     
-class 
+class MLP(nn.Module):
+    def __init__(self, input_dim):
+        super().__init__()
+        
+        self.input_dim = input_dim
+        
+        self.down_proj = nn.Linear(input_dim,  64)
+        self.up_proj = nn.Linear(64,  input_dim)
+        self.relu = nn.ReLU()
+        
+    def forward(self, x):
+        out = self.down_proj(x)
+        out = self.relu(out)
+        out = self.up_proj(out)
+        
+        return out
+    
+class PatchEmbedding(nn.Module):
+    def __init__(self, img_size=32, patch_size=4, in_channels=3, embed_dim=64):
+        super().__init__()
+        self.patch_size = patch_size
+        self.n_patches = (img_size // patch_size) ** 2
+        
+        # Conv2d extracts patches & projects them
+        self.proj = nn.Conv2d(
+            in_channels, 
+            embed_dim, 
+            kernel_size=patch_size, 
+            stride=patch_size
+        )
+
+    def forward(self, x):
+        # x shape: (batch, channels, H, W)
+        x = self.proj(x) # (batch, embed_dim, H/patch, W/patch)
+        x = x.flatten(2) # (batch, embed_dim, n_patches)
+        x = x.transpose(1, 2) # (batch, n_patches, embed_dim)
+        return x
