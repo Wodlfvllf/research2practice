@@ -1,0 +1,8 @@
+cff-version: 1.2.0
+message: "If you use this work, please cite the original paper."
+title: "Masked Autoencoders Are Effective Tokenizers for Diffusion Models"
+authors:
+  - family-names: "Authors"
+    given-names: "Paper Authors"
+year: 2025
+doi: ""
