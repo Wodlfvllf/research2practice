@@ -80,3 +80,19 @@ class PatchEmbedding(nn.Module):
         x = x.flatten(2) # (batch, embed_dim, n_patches)
         x = x.transpose(1, 2) # (batch, n_patches, embed_dim)
         return x
+    
+class TransformerBlock(nn.Module):
+    def __init__(self, hidden_dim, n_heads):
+        super().__init__()
+        self.attention = Attention(hidden_dim, n_heads)
+        self.mlp = MLP(hidden_dim)
+        self.relu = nn.ReLU()
+        self.norm = nn.LayerNorm(hidden_dim)
+
+    def forward(self, x):
+        x = self.attention(x)
+        x = self.relu(x)
+        x = self.mlp(x)
+        x = self.relu(x)
+        x = self.norm(x)
+        return x
