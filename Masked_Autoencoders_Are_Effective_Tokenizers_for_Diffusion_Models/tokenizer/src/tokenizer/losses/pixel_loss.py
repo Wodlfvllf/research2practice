@@ -6,90 +6,78 @@ Simple pixel-wise MSE loss between original and reconstructed images.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-
+from einops import rearrange
 class ReconstructionLoss(nn.Module):
     """
-    Implements pixel-wise Mean Squared Error (MSE) reconstruction loss.
+    Implements pixel-wise Mean Squared Error (MSE) reconstruction loss,
+    specifically for a Masked Autoencoder (MAE) output.
     
-    This is the most straightforward component of the total loss, ensuring
-    numerical accuracy between input and reconstructed images.
+    The loss is calculated ONLY on the patches that were masked.
     """
     
-    def __init__(self, reduction='mean'):
-        """
-        Args:
-            reduction (str): Specifies the reduction to apply to the output:
-                           'none' | 'mean' | 'sum'. Default: 'mean'
-        """
+    def __init__(self):
         super().__init__()
-        self.reduction = reduction
     
-    def forward(self, reconstructed, original, mask):
+    def forward(self, reconstruction_patches, original_image, patch_size, mask):
         """
-        Calculate MSE loss between reconstructed and original images.
+        Calculate MSE loss on the masked patches.
         
         Args:
-            reconstructed (torch.Tensor): Reconstructed images from autoencoder
-                                        Shape: (B, C, H, W)
-            original (torch.Tensor): Original input images
-                                   Shape: (B, C, H, W)
+            reconstruction_patches (torch.Tensor): The output from the MAE decoder.
+                                                  Shape: (B, num_patches, patch_features)
+            original_image (torch.Tensor): The original input image.
+                                           Shape: (B, C, H, W)
+            patch_size (int): The size of a single patch (e.g., 4 for a 4x4 patch).
+            mask (torch.Tensor): The binary mask from the MAE. 
+                                 Shape: (B, num_patches), where 1 indicates a masked patch.
         
         Returns:
-            torch.Tensor: MSE reconstruction loss
+            torch.Tensor: MSE reconstruction loss calculated on masked patches.
         """
-        return F.mse_loss(reconstructed, original, reduction=self.reduction, mask=mask)
+        # 1. Convert the original image into patches to create the ground truth
+        #    This is the inverse of the decoder's final prediction layer.
+        target_patches = rearrange(original_image, 'b c (h p1) (w p2) -> b (h w) (p1 p2 c)', 
+                                   p1=patch_size, p2=patch_size)
+        
+        # 2. Calculate the element-wise loss for all patches
+        loss_all_patches = (reconstruction_patches - target_patches) ** 2
+        
+        # 3. We only care about the mean loss on the MASKED patches.
+        #    The mask has shape (B, num_patches). We need to unsqueeze it to (B, num_patches, 1)
+        #    to broadcast correctly with the loss tensor of shape (B, num_patches, patch_features).
+        loss_masked = (loss_all_patches * mask.unsqueeze(-1)).sum()
+        
+        # 4. Normalize the loss by the number of masked patches.
+        #    This makes the loss independent of the mask ratio.
+        num_masked_patches = mask.sum()
+        if num_masked_patches == 0:
+            return loss_masked # Should be 0
+            
+        mean_loss = loss_masked / num_masked_patches
+        
+        return mean_loss
 
 class L1ReconstructionLoss(nn.Module):
     """
-    Alternative reconstruction loss using L1 (MAE) instead of MSE.
-    Sometimes provides better gradient properties.
+    Alternative reconstruction loss using L1 (MAE) instead of MSE, for MAE outputs.
     """
     
-    def __init__(self, reduction='mean'):
+    def __init__(self):
         super().__init__()
-        self.reduction = reduction
     
-    def forward(self, reconstructed, original, mask):
+    def forward(self, reconstruction_patches, original_image, patch_size, mask):
         """
-        Calculate L1 loss between reconstructed and original images.
-        
-        Args:
-            reconstructed (torch.Tensor): Reconstructed images from autoencoder
-            original (torch.Tensor): Original input images
-        
-        Returns:
-            torch.Tensor: L1 reconstruction loss
+        Calculate L1 loss on the masked patches.
         """
-        return F.l1_loss(reconstructed, original, reduction=self.reduction, mask=mask)
-    
-
-
-class CombinedReconstructionLoss(nn.Module):
-    """
-    Combined L1 + MSE reconstruction loss for better training stability.
-    """
-    
-    def __init__(self, l1_weight=1.0, mse_weight=1.0, reduction='mean'):
-        super().__init__()
-        self.l1_weight = l1_weight
-        self.mse_weight = mse_weight
-        self.reduction = reduction
-    
-    def forward(self, reconstructed, original, mask):
-        """
-        Calculate combined L1 + MSE reconstruction loss.
+        target_patches = rearrange(original_image, 'b c (h p1) (w p2) -> b (h w) (p1 p2 c)', 
+                                   p1=patch_size, p2=patch_size)
         
-        Args:
-            reconstructed (torch.Tensor): Reconstructed images from autoencoder
-            original (torch.Tensor): Original input images
+        loss_all_patches = torch.abs(reconstruction_patches - target_patches)
+        loss_masked = (loss_all_patches * mask.unsqueeze(-1)).sum()
         
-        Returns:
-            torch.Tensor: Combined reconstruction loss
-        """
-        l1_loss = F.l1_loss(reconstructed, original, reduction=self.reduction, mask = mask)
-        mse_loss = F.mse_loss(reconstructed, original, reduction=self.reduction, mask = mask)
-        
-        return self.l1_weight * l1_loss + self.mse_weight * mse_loss
-
-
+        num_masked_patches = mask.sum()
+        if num_masked_patches == 0:
+            return loss_masked
+            
+        mean_loss = loss_masked / num_masked_patches
+        return mean_loss
