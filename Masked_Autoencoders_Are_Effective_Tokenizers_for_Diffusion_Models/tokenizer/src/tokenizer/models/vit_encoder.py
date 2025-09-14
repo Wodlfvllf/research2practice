@@ -153,6 +153,7 @@ class Attention(nn.Module):
         self.Q = nn.Linear(hidden_dim, hidden_dim)
         self.K = nn.Linear(hidden_dim, hidden_dim)
         self.V = nn.Linear(hidden_dim, hidden_dim)
+        self.out_proj = nn.Linear(hidden_dim, hidden_dim)
         self.latent_vec_len = latent_vec_len
         
         # Precompute 1D RoPE for latent tokens (temporal/sequential)
@@ -229,16 +230,18 @@ class Attention(nn.Module):
 
         # Merge heads -> (B, S, hidden_dim)
         out = rearrange(out, 'b n s h -> b s (n h)')
+        out = self.out_proj(out)
 
         return out
 
 
-# ---------- Small MLP, PatchEmbedding, TransformerBlock (unchanged except attention) ----------
+# ---------- Small MLP, PatchEmbedding, TransformerBlock ----------
 class MLP(nn.Module):
-    def __init__(self, input_dim):
+    def __init__(self, input_dim, mlp_ratio=4.0):
         super().__init__()
-        self.down_proj = nn.Linear(input_dim, 64)
-        self.up_proj = nn.Linear(64, input_dim)
+        hidden_dim = int(input_dim * mlp_ratio)
+        self.down_proj = nn.Linear(input_dim, hidden_dim)
+        self.up_proj = nn.Linear(hidden_dim, input_dim)
         self.relu = nn.ReLU()
 
     def forward(self, x):
@@ -253,6 +256,8 @@ class PatchEmbedding(nn.Module):
         super().__init__()
         self.patch_size = patch_size
         self.n_patches = (img_size // patch_size) ** 2
+        self.height = img_size // patch_size
+        self.width = img_size // patch_size
         self.proj = nn.Conv2d(in_channels, embed_dim, kernel_size=patch_size, stride=patch_size)
 
     def forward(self, x):
@@ -264,79 +269,172 @@ class PatchEmbedding(nn.Module):
 
 
 class TransformerBlock(nn.Module):
-    def __init__(self, hidden_dim, n_heads, max_seq_len=512):
+    def __init__(self, hidden_dim, n_heads, max_seq_len=512, mlp_ratio=4.0, 
+                 latent_vec_len=16, max_height=32, max_width=32):
         super().__init__()
-        self.attention = Attention(hidden_dim, n_heads, max_seq_len=max_seq_len)
-        self.mlp = MLP(hidden_dim)
-        self.relu = nn.ReLU()
-        self.norm = nn.LayerNorm(hidden_dim)
+        self.attention = Attention(hidden_dim, n_heads, max_seq_len=max_seq_len,
+                                 latent_vec_len=latent_vec_len, max_height=max_height, max_width=max_width)
+        self.mlp = MLP(hidden_dim, mlp_ratio=mlp_ratio)
+        self.norm1 = nn.LayerNorm(hidden_dim)
+        self.norm2 = nn.LayerNorm(hidden_dim)
 
-    def forward(self, x):
-        x = self.attention(x)
-        x = self.relu(x)
-        x = self.mlp(x)
-        x = self.relu(x)
-        x = self.norm(x)
+    def forward(self, x, height=None, width=None):
+        # Pre-norm residual connection
+        x = x + self.attention(self.norm1(x), height=height, width=width)
+        x = x + self.mlp(self.norm2(x))
         return x
+
 
 class Encoder(nn.Module):
     def __init__(self,
-                img_size = 64, 
-                patch_size = 4,
-                embed_dim = 128,
-                encoder_depth = 4,
-                hidden_token_length = 16,
-                encoder_heads = 4,
-                in_channels = 3,
+                img_size=64, 
+                patch_size=4,
+                embed_dim=128,
+                encoder_depth=4,
+                hidden_token_length=16,
+                encoder_heads=4,
+                in_channels=3,
+                mlp_ratio=4.0,
                 ):
+        super().__init__()
         
         self.img_size = img_size
         self.patch_size = patch_size
         self.embed_dim = embed_dim
         self.encoder_depth = encoder_depth
-        self.decoder_depth = decoder_depth
         self.hidden_token_length = hidden_token_length
-        self.mlp_ratio = mlp_ratio
         self.encoder_heads = encoder_heads
-        self.decoder_heads = decoder_heads
         self.in_channels = in_channels
+        self.mlp_ratio = mlp_ratio
         
-        self.patch_embed = PatchEmbedding(self.img_size, self.patch_size, self.in_channels, self.embed_dim)
+        self.patch_embed = PatchEmbedding(img_size, patch_size, in_channels, embed_dim)
         self.num_patches = self.patch_embed.n_patches
-        self.latent_tokens = nn.Parameter(torch.zeros(1, self.hidden_token_length, self.embed_dim), requires_grad = True)
+        self.latent_tokens = nn.Parameter(torch.zeros(1, self.hidden_token_length, self.embed_dim), requires_grad=True)
+        
+        # Calculate max height/width for RoPE
+        max_height = max_width = img_size // patch_size
+        
         self.blocks = nn.ModuleList([
-            TransformerBlock(self.hidden_dim, self.n_heads) for _ in range(self.encoder_depth)
+            TransformerBlock(embed_dim, encoder_heads, 
+                           max_seq_len=self.num_patches + hidden_token_length,
+                           mlp_ratio=mlp_ratio, latent_vec_len=hidden_token_length,
+                           max_height=max_height, max_width=max_width) 
+            for _ in range(encoder_depth)
         ])
-        self.norm_layer = nn.LayerNorm()
+        self.norm_layer = nn.LayerNorm(embed_dim)
+        
+        # Initialize latent tokens
+        nn.init.normal_(self.latent_tokens, std=0.02)
         
     def forward(self, x):
-        bs, seq_len, hid_dim = x.shape
+        # x: (B, C, H, W)
+        x = self.patch_embed(x)  # (B, num_patches, embed_dim)
+        bs = x.shape[0]
+        
         expanded_latent_tokens = self.latent_tokens.expand(bs, -1, -1)
-        combined_input = torch.cat([expanded_latent_tokens, x], dim = 1)
+        combined_input = torch.cat([expanded_latent_tokens, x], dim=1)
+        
+        height = width = self.img_size // self.patch_size
+        
         for block in self.blocks:
-            combined_input = block(combined_input)
+            combined_input = block(combined_input, height=height, width=width)
             
+        combined_input = self.norm_layer(combined_input)
         return combined_input
         
+        
 class Decoder(nn.Module):
-    def __init__(self):
-        pass
-    def forward(self):
-        pass
-    
+    def __init__(self,
+                img_size=64, 
+                patch_size=4,
+                embed_dim=128,
+                decoder_depth=4,
+                hidden_token_length=16,
+                decoder_heads=4,
+                in_channels=3,
+                mlp_ratio=4.0,
+                ):
+        super().__init__()
+        
+        self.img_size = img_size
+        self.patch_size = patch_size
+        self.embed_dim = embed_dim
+        self.decoder_depth = decoder_depth
+        self.hidden_token_length = hidden_token_length
+        self.decoder_heads = decoder_heads
+        self.in_channels = in_channels
+        self.mlp_ratio = mlp_ratio
+        self.num_patches = (img_size // patch_size) ** 2
+        
+        self.mask_token = nn.Parameter(torch.zeros(1, 1, embed_dim), requires_grad=True)
+        self.decoder_embed = nn.Linear(embed_dim, embed_dim)
+        
+        # Calculate max height/width for RoPE
+        max_height = max_width = img_size // patch_size
+        
+        self.decoder_blocks = nn.ModuleList([
+            TransformerBlock(embed_dim, decoder_heads,
+                           max_seq_len=self.num_patches + hidden_token_length,
+                           mlp_ratio=mlp_ratio, latent_vec_len=hidden_token_length,
+                           max_height=max_height, max_width=max_width)
+            for _ in range(decoder_depth)
+        ])
+        self.decoder_norm = nn.LayerNorm(embed_dim)
+        self.decoder_pred = nn.Linear(embed_dim, patch_size * patch_size * in_channels)
+        
+        # Initialize mask token
+        nn.init.normal_(self.mask_token, std=0.02)
+        
+    def forward(self, x, ids_restore):
+        # x: encoded latent + visible patches from encoder
+        # Apply decoder embedding
+        x = self.decoder_embed(x)
+        
+        # Extract latent tokens and visible patches
+        latent_tokens = x[:, :self.hidden_token_length, :]
+        visible_patches = x[:, self.hidden_token_length:, :]
+        
+        bs, _, embed_dim = x.shape
+        
+        # Add mask tokens for missing patches
+        mask_tokens = self.mask_token.expand(bs, self.num_patches - visible_patches.shape[1], -1)
+        all_patches = torch.cat([visible_patches, mask_tokens], dim=1)
+        
+        # Unshuffle patches to original order
+        all_patches = torch.gather(all_patches, dim=1, 
+                                 index=ids_restore.unsqueeze(-1).expand(-1, -1, embed_dim))
+        
+        # Combine latent tokens with all patches
+        decoder_input = torch.cat([latent_tokens, all_patches], dim=1)
+        
+        height = width = self.img_size // self.patch_size
+        
+        for block in self.decoder_blocks:
+            decoder_input = block(decoder_input, height=height, width=width)
+            
+        decoder_input = self.decoder_norm(decoder_input)
+        
+        # Only predict on patch tokens (skip latent tokens)
+        patch_tokens = decoder_input[:, self.hidden_token_length:, :]
+        reconstruction = self.decoder_pred(patch_tokens)
+        
+        return reconstruction
+
+
 class Model(nn.Module):
     def __init__(self, 
-                img_size = 64, 
-                patch_size = 4,
-                embed_dim = 128,
-                encoder_depth = 4,
-                decoder_depth = 4,
-                hidden_token_length = 16,
-                mlp_ratio = 0.4,
-                encoder_heads = 4,
-                decoder_heads = 4,
-                in_channels = 3,
+                img_size=64, 
+                patch_size=4,
+                embed_dim=128,
+                encoder_depth=4,
+                decoder_depth=4,
+                hidden_token_length=16,
+                mlp_ratio=4.0,
+                encoder_heads=4,
+                decoder_heads=4,
+                in_channels=3,
                 ):
+        super().__init__()
         
         self.img_size = img_size
         self.patch_size = patch_size
@@ -348,21 +446,78 @@ class Model(nn.Module):
         self.encoder_heads = encoder_heads
         self.decoder_heads = decoder_heads
         self.in_channels = in_channels
+        self.num_patches = (img_size // patch_size) ** 2
         
-        #-------------------------------------------------------------------------------------
-        # Encoder Specifics
+        # Encoder
         self.encoder = Encoder(
-            img_size = img_size
-            patch_size = patch_size
-            embed_dim = embed_dim
-            encoder_depth = encoder_depth
-            hidden_token_length = hidden_token_length
-            encoder_heads = encoder_heads
-            in_channels = in_channels
+            img_size=img_size,
+            patch_size=patch_size,
+            embed_dim=embed_dim,
+            encoder_depth=encoder_depth,
+            hidden_token_length=hidden_token_length,
+            encoder_heads=encoder_heads,
+            in_channels=in_channels,
+            mlp_ratio=mlp_ratio
         )
         
-        #--------------------------------------------------------------------------------------
-        # Decoder Specifics
-        self.decoder_pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, embed_dim), requires_grad=True)
+        # Decoder
+        self.decoder = Decoder(
+            img_size=img_size,
+            patch_size=patch_size,
+            embed_dim=embed_dim,
+            decoder_depth=decoder_depth,
+            hidden_token_length=hidden_token_length,
+            decoder_heads=decoder_heads,
+            in_channels=in_channels,
+            mlp_ratio=mlp_ratio
+        )
         
+    def mask_patches(self, x, mask_ratio):
+        """
+        Mask patches for MAE training.
+        x: (B, num_patches, embed_dim)
+        """
+        B, L, D = x.shape
+        len_keep = int(L * (1 - mask_ratio))
+
+        noise = torch.rand(B, L, device=x.device)  # noise in [0, 1]
+
+        # sort noise for each sample
+        ids_shuffle = torch.argsort(noise, dim=1)  # ascend: small is keep, large is remove
+        ids_restore = torch.argsort(ids_shuffle, dim=1)
+
+        # keep the first subset
+        ids_keep = ids_shuffle[:, :len_keep]
+        x_masked = torch.gather(x, dim=1, index=ids_keep.unsqueeze(-1).repeat(1, 1, D))
+
+        # generate the binary mask: 0 is keep, 1 is remove
+        mask = torch.ones([B, L], device=x.device)
+        mask[:, :len_keep] = 0
+        # unshuffle to get the binary mask
+        mask = torch.gather(mask, dim=1, index=ids_restore)
+
+        return x_masked, mask, ids_restore
     
+    def forward(self, x, mask_ratio=0.75):
+        # x: (B, C, H, W)
+        # Get patch embeddings
+        patches = self.encoder.patch_embed(x)  # (B, num_patches, embed_dim)
+        
+        # Mask patches
+        patches_masked, mask, ids_restore = self.mask_patches(patches, mask_ratio)
+        
+        # Add latent tokens and encode
+        bs = x.shape[0]
+        latent_tokens = self.encoder.latent_tokens.expand(bs, -1, -1)
+        encoder_input = torch.cat([latent_tokens, patches_masked], dim=1)
+        
+        # Forward through encoder blocks
+        height = width = self.img_size // self.patch_size
+        for block in self.encoder.blocks:
+            encoder_input = block(encoder_input, height=height, width=width)
+        encoder_input = self.encoder.norm_layer(encoder_input)
+        
+        # Decode
+        reconstruction = self.decoder(encoder_input, ids_restore)
+        
+        return reconstruction, mask
