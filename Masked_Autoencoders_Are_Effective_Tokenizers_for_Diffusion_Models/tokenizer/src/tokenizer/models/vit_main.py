@@ -90,17 +90,12 @@ class Model(nn.Module):
         
         # Mask patches
         patches_masked, mask, ids_restore = self.mask_patches(patches, mask_ratio)
-        
-        # Add latent tokens and encode
-        bs = x.shape[0]
-        latent_tokens = self.encoder.latent_tokens.expand(bs, -1, -1)
-        encoder_input = torch.cat([latent_tokens, patches_masked], dim=1)
+        encoder_input = patches_masked
         
         # Forward through encoder blocks
         height = width = self.img_size // self.patch_size
         for block in self.encoder.blocks:
             encoder_input = block(encoder_input, height=height, width=width)
-        encoder_input = self.encoder.norm_layer(encoder_input)
         
         # Decode
         reconstruction = self.decoder(encoder_input, ids_restore)
