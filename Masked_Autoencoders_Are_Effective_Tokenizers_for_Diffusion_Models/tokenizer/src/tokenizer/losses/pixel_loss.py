@@ -40,3 +40,26 @@ class ReconstructionLoss(nn.Module):
         """
         return F.mse_loss(reconstructed, original, reduction=self.reduction, mask=mask)
 
+class L1ReconstructionLoss(nn.Module):
+    """
+    Alternative reconstruction loss using L1 (MAE) instead of MSE.
+    Sometimes provides better gradient properties.
+    """
+    
+    def __init__(self, reduction='mean'):
+        super().__init__()
+        self.reduction = reduction
+    
+    def forward(self, reconstructed, original):
+        """
+        Calculate L1 loss between reconstructed and original images.
+        
+        Args:
+            reconstructed (torch.Tensor): Reconstructed images from autoencoder
+            original (torch.Tensor): Original input images
+        
+        Returns:
+            torch.Tensor: L1 reconstruction loss
+        """
+        return F.l1_loss(reconstructed, original, reduction=self.reduction)
+
