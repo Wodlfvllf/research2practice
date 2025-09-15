@@ -148,7 +148,7 @@ class FeatureExtractors:
                         patch_hog.append(np.zeros(576))
             hog_features.append(patch_hog)
         
-        return torch.tensor(hog_features, dtype=torch.float32, device=self.device)
+        return torch.tensor(np.array(hog_features), dtype=torch.float32, device=self.device)
     
     def extract_clip_features(self, images, patch_size=4):
         """Extract CLIP visual features"""

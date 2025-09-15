@@ -133,33 +133,34 @@ class Model(nn.Module):
         return x_masked, mask, ids_restore
     
     def forward(self, x, mask_ratio=0.75, extract_aux_features=True):
-        # x: (B, C, H, W)
-        # Get patch embeddings
-        patches = self.encoder.patch_embed(x)  # (B, num_patches, embed_dim)
+        # 1. Encode the image and get the full sequence of processed latent and patch tokens
+        encoded_tokens = self.encoder(x)
         
-        # Forward through encoder blocks
-        height = width = self.img_size // self.patch_size
-        for block in self.encoder.blocks:
-            patches = block(patches, height=height, width=width)
-        
-        # Mask patches
-        patches_masked, mask, ids_restore = self.mask_patches(patches, mask_ratio)
-        encoder_input = patches_masked
-        
-        # Decode
-        reconstruction = self.decoder(encoder_input, ids_restore)
+        # 2. Extract the latent tokens and patch tokens
+        latents = encoded_tokens[:, :self.hidden_token_length, :]
+        patch_tokens = encoded_tokens[:, self.hidden_token_length:, :]
 
-        # Auxiliary predictions
+        # 3. Mask the patch tokens
+        # Note: self.mask_patches returns the *visible* patches, the mask, and restore_ids
+        visible_patches, mask, ids_restore = self.mask_patches(patch_tokens, mask_ratio)
+        
+        # 4. Form the input for the decoder
+        # The decoder expects the latent tokens + the visible patches
+        decoder_input = torch.cat([latents, visible_patches], dim=1)
+
+        # 5. Decode
+        reconstruction = self.decoder(decoder_input, ids_restore)
+
+        # 6. Handle Auxiliary predictions (optional)
         aux_outputs = {}
-        if self.use_auxiliary_decoders and extract_aux_features:
-            # Extract target features
+        if self.use_auxiliary_decoders and extract_aux_features and mask_ratio > 0:
+            # The aux decoders also need the latents + visible patches
             with torch.no_grad():
                 hog_targets = self.feature_extractors.extract_hog_features(x, self.patch_size)
                 clip_targets = self.feature_extractors.extract_clip_features(x, self.patch_size)
             
-            # Predict auxiliary features using same encoder output
-            hog_pred = self.hog_decoder(encoder_input, ids_restore)
-            clip_pred = self.clip_decoder(encoder_input, ids_restore)
+            hog_pred = self.hog_decoder(decoder_input, ids_restore)
+            clip_pred = self.clip_decoder(decoder_input, ids_restore)
             
             aux_outputs = {
                 'hog_pred': hog_pred,
@@ -168,4 +169,5 @@ class Model(nn.Module):
                 'clip_targets': clip_targets,
             }
         
-        return reconstruction, mask, aux_outputs
+        # 7. Return latents along with other values
+        return reconstruction, latents, mask, aux_outputs
