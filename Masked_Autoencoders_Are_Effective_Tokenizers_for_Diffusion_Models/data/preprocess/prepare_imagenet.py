@@ -6,7 +6,7 @@ import requests
 
 # The official validation ground truth labels are in XML format. A simpler, commonly used
 # file maps validation image names to their class index. We'll download one if not provided.
-VAL_GT_URL = "https://raw.githubusercontent.com/soumith/imagenet-torch/master/val.txt"
+VAL_GT_URL = "https://raw.githubusercontent.com/BVLC/caffe/master/data/ilsvrc12/val.txt"
 VAL_GT_FILENAME = "val_ground_truth.txt"
 
 def download_val_gt(output_dir):

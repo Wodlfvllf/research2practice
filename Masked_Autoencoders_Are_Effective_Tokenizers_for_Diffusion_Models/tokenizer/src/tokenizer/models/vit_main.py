@@ -64,7 +64,7 @@ class Model(nn.Module):
         if use_auxiliary_decoders:
             self.hog_decoder = AuxiliaryDecoder(
                 embed_dim=embed_dim,
-                output_dim=36,  # Updated HOG feature dimension for 4x4 patches
+                output_dim=576,  # Updated HOG feature dimension for 4x4 patches
                 decoder_depth=decoder_depth,
                 decoder_heads=decoder_heads,
                 hidden_token_length=hidden_token_length,
@@ -137,14 +137,14 @@ class Model(nn.Module):
         # Get patch embeddings
         patches = self.encoder.patch_embed(x)  # (B, num_patches, embed_dim)
         
-        # Mask patches
-        patches_masked, mask, ids_restore = self.mask_patches(patches, mask_ratio)
-        encoder_input = patches_masked
-        
         # Forward through encoder blocks
         height = width = self.img_size // self.patch_size
         for block in self.encoder.blocks:
-            encoder_input = block(encoder_input, height=height, width=width)
+            patches = block(patches, height=height, width=width)
+        
+        # Mask patches
+        patches_masked, mask, ids_restore = self.mask_patches(patches, mask_ratio)
+        encoder_input = patches_masked
         
         # Decode
         reconstruction = self.decoder(encoder_input, ids_restore)
@@ -155,7 +155,7 @@ class Model(nn.Module):
             # Extract target features
             with torch.no_grad():
                 hog_targets = self.feature_extractors.extract_hog_features(x, self.patch_size)
-                clip_targets = self.feature_extractors.extract_clip_features(x)
+                clip_targets = self.feature_extractors.extract_clip_features(x, self.patch_size)
             
             # Predict auxiliary features using same encoder output
             hog_pred = self.hog_decoder(encoder_input, ids_restore)

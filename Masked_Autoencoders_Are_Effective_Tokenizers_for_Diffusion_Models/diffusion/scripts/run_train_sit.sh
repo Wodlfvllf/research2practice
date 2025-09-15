@@ -5,14 +5,14 @@
 
 # --- Configuration ---
 # Path to your prepared ImageNet dataset
-DATA_PATH="/path/to/your/prepared/imagenet"
+DATA_PATH="/root/PapersImplementation/Masked_Autoencoders_Are_Effective_Tokenizers_for_Diffusion_Models/data/imagenet_prepared"
 
 # Path to your fine-tuned MAETok checkpoint
-TOKENIZER_PATH="./tokenizer/checkpoints/maetok_finetuned/finetuned_decoder_epoch_49.pth"
+TOKENIZER_PATH="./tokenizer/checkpoints/maetok_finetuned/finetuned_decoder_epoch_0.pth"
 
 # Training parameters
-BATCH_SIZE=64
-EPOCHS=500
+BATCH_SIZE=2
+EPOCHS=1
 LEARNING_RATE=1e-4
 
 # Checkpoint directory

@@ -59,11 +59,24 @@ class Encoder(nn.Module):
         
         height = width = self.img_size // self.patch_size
         
+        latents = combined_input[:, :self.hidden_token_length, :]
+        patches = combined_input[:, self.hidden_token_length:, :]
+        
+        height = width = self.img_size // self.patch_size
+        
+        latents = combined_input[:, :self.hidden_token_length, :]
+        patches = combined_input[:, self.hidden_token_length:, :]
+        
         for block in self.blocks:
-            combined_input = block(combined_input, height=height, width=width)
+            patches = block(patches, height=height, width=width)
             
-        combined_input = self.norm_layer(combined_input)
-        return combined_input
+        combined_output = torch.cat([latents, patches], dim=1)
+        combined_output = self.norm_layer(combined_output)
+        return combined_output
+            
+        combined_output = torch.cat([latents, patches], dim=1)
+        combined_output = self.norm_layer(combined_output)
+        return combined_output
         
         
 

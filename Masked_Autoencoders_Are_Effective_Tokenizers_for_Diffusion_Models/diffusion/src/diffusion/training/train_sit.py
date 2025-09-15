@@ -75,7 +75,13 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # Load tokenizer
-    tokenizer = MAETokenizer()
+    tokenizer = MAETokenizer(
+        img_size=256, patch_size=16, embed_dim=768,
+        encoder_depth=12, encoder_heads=12,
+        decoder_depth=8, decoder_heads=16,
+        mlp_ratio=4.0,
+        use_auxiliary_decoders=True
+    )
     tokenizer.load_state_dict(torch.load(args.tokenizer_path)['model_state_dict'])
     tokenizer.eval()
 

@@ -1,6 +1,7 @@
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from transformers import CLIPModel, CLIPProcessor
 import torchvision.transforms as transforms
 from skimage.feature import hog
@@ -79,14 +80,19 @@ class AuxiliaryDecoder(nn.Module):
         
         height = width = self.img_size // self.patch_size
         
-        # Forward through transformer blocks (same as your decoder)
+        # Process latent and patch tokens separately through decoder blocks
+        latents = decoder_input[:, :self.hidden_token_length, :]
+        patches = decoder_input[:, self.hidden_token_length:, :]
+        
         for block in self.decoder_blocks:
-            decoder_input = block(decoder_input, height=height, width=width)
+            patches = block(patches, height=height, width=width)
             
-        decoder_input = self.decoder_norm(decoder_input)
+        # Recombine and normalize
+        decoder_output = torch.cat([latents, patches], dim=1)
+        decoder_output = self.decoder_norm(decoder_output)
         
         # Only predict on patch tokens (skip latent tokens) - same as your decoder
-        patch_tokens = decoder_input[:, self.hidden_token_length:, :]
+        patch_tokens = decoder_output[:, self.hidden_token_length:, :]
         feature_prediction = self.decoder_pred(patch_tokens)  # Predict features instead of pixels
         
         return feature_prediction
@@ -139,12 +145,12 @@ class FeatureExtractors:
                         # For 4x4 patch with (2,2) pixels_per_cell, we get 2x2=4 cells
                         # With 9 orientations, that's 4*9=36 features per cell
                         # With (1,1) cells_per_block, we get 36 features
-                        patch_hog.append(np.zeros(36))
+                        patch_hog.append(np.zeros(576))
             hog_features.append(patch_hog)
         
         return torch.tensor(hog_features, dtype=torch.float32, device=self.device)
     
-    def extract_clip_features(self, images):
+    def extract_clip_features(self, images, patch_size=4):
         """Extract CLIP visual features"""
         with torch.no_grad():
             # Resize images to CLIP expected size (224x224)
@@ -154,17 +160,17 @@ class FeatureExtractors:
             
             images_resized = torch.stack([transform(img) for img in images])
             
-            # Ensure images are in correct format for CLIP
-            if images_resized.max() <= 1.0:
-                images_for_clip = images_resized
-            else:
-                images_for_clip = images_resized / 255.0
-            
+            # De-normalize images before converting to PIL
+            mean = torch.tensor([0.485, 0.456, 0.406], device=images.device).view(1, 3, 1, 1)
+            std = torch.tensor([0.229, 0.224, 0.225], device=images.device).view(1, 3, 1, 1)
+            images_for_clip = images_resized * std + mean
+            images_for_clip = torch.clamp(images_for_clip, 0, 1)
+
             # Convert to PIL format expected by CLIP processor
             images_pil = []
             for img in images_for_clip:
                 img_np = img.permute(1, 2, 0).cpu().numpy()
-                images_pil.append(img_np)
+                images_pil.append((img_np * 255).astype(np.uint8))
             
             inputs = self.clip_processor(images=images_pil, return_tensors="pt")
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
@@ -177,7 +183,7 @@ class FeatureExtractors:
             clip_patches = patch_features[:, 1:, :]  # Remove CLS token
             
             # CLIP has 196 patches (14x14), we need to match our patch count
-            target_patches = (images.shape[2] // 4) ** 2  # Your patch_size=4
+            target_patches = (images.shape[2] // patch_size) ** 2
             if clip_patches.shape[1] != target_patches:
                 # Interpolate to match patch count
                 if target_patches < clip_patches.shape[1]:

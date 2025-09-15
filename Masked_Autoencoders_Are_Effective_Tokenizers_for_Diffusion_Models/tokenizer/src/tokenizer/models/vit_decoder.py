@@ -42,7 +42,7 @@ class Decoder(nn.Module):
             for _ in range(decoder_depth)
         ])
         self.decoder_norm = nn.LayerNorm(embed_dim)
-        self.decoder_pred = nn.Linear(embed_dim, patch_size * patch_size * in_channels)
+        self.decoder_pred = nn.Linear(embed_dim, embed_dim)
         
         # Initialize mask token
         nn.init.normal_(self.mask_token, std=0.02)
@@ -71,13 +71,19 @@ class Decoder(nn.Module):
         
         height = width = self.img_size // self.patch_size
         
+        # Process latent and patch tokens separately through decoder blocks
+        latents = decoder_input[:, :self.hidden_token_length, :]
+        patches = decoder_input[:, self.hidden_token_length:, :]
+        
         for block in self.decoder_blocks:
-            decoder_input = block(decoder_input, height=height, width=width)
+            patches = block(patches, height=height, width=width)
             
-        decoder_input = self.decoder_norm(decoder_input)
+        # Recombine and normalize
+        decoder_output = torch.cat([latents, patches], dim=1)
+        decoder_output = self.decoder_norm(decoder_output)
         
         # Only predict on patch tokens (skip latent tokens)
-        patch_tokens = decoder_input[:, self.hidden_token_length:, :]
+        patch_tokens = decoder_output[:, self.hidden_token_length:, :]
         reconstruction = self.decoder_pred(patch_tokens)
         
         return reconstruction

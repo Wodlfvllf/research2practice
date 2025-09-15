@@ -3,10 +3,10 @@ import argparse
 import torch
 import torch.optim as optim
 import os
-from tokenizer.models.vit_main import Model
-from tokenizer.data.imagenet_dataset import ImageNetDataset
-from tokenizer.losses.adversarial_loss import PatchDiscriminator
-from tokenizer.train_tokenizer import MAETrainer, create_data_loaders
+from .models.vit_main import Model
+from .data.imagenet_dataset import ImageNetDataset
+from .losses.adversarial_loss import PatchDiscriminator, AdversarialLoss
+from .train_tokenizer import MAETrainer, create_data_loaders
 
 class DecoderFinetuner(MAETrainer):
     """
@@ -27,6 +27,11 @@ class DecoderFinetuner(MAETrainer):
             in_channels=model.in_channels,
             patch_size=model.patch_size
         ).to(device)
+        self.adversarial_loss_fn = AdversarialLoss(
+            self.discriminator,
+            patch_size=model.patch_size,
+            in_channels=model.in_channels
+        ).to(device)
 
     def compute_loss(self, target, reconstruction, auxiliary, mask):
         """
@@ -36,14 +41,7 @@ class DecoderFinetuner(MAETrainer):
         recon_loss, loss_dict = super().compute_loss(target, reconstruction, auxiliary, mask)
         
         # 2. Adversarial Loss
-        # We need to reshape the patches for the discriminator
-        recon_patches_img = self.model.unpatchify(reconstruction)
-        
-        # Generator loss
-        g_loss = self.adversarial_loss_fn(recon_patches_img, target, mask, 'generator')
-        
-        # Discriminator loss
-        d_loss = self.adversarial_loss_fn(recon_patches_img, target, mask, 'discriminator')
+        g_loss, d_loss = self.adversarial_loss_fn(reconstruction, target, mask)
         
         # Combine losses
         # The paper suggests a weighted sum, e.g., lambda_adv * g_loss
@@ -116,7 +114,13 @@ def finetune_decoder(model_class, dataset_class, data_dir, pretrained_checkpoint
     train_loader, val_loader = create_data_loaders(dataset_class, data_dir, batch_size=batch_size)
     
     # Load the pre-trained model
-    model = model_class(use_auxiliary_decoders=extract_aux_features)
+    model = model_class(
+        img_size=256, patch_size=16, embed_dim=768,
+        encoder_depth=12, encoder_heads=12,
+        decoder_depth=8, decoder_heads=16,
+        mlp_ratio=4.0,
+        use_auxiliary_decoders=extract_aux_features
+    )
     checkpoint = torch.load(pretrained_checkpoint, map_location=device)
     model.load_state_dict(checkpoint['model_state_dict'])
     print(f"Loaded pre-trained model from {pretrained_checkpoint}")

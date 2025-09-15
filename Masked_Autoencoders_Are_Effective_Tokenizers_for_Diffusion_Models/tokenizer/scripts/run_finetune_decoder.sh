@@ -5,14 +5,14 @@
 
 # --- Configuration ---
 # Path to your prepared ImageNet dataset
-DATA_PATH="/path/to/your/prepared/imagenet"
+DATA_PATH="/root/PapersImplementation/Masked_Autoencoders_Are_Effective_Tokenizers_for_Diffusion_Models/data/imagenet_prepared"
 
 # Path to the checkpoint from the first stage of pre-training
 PRETRAINED_CHECKPOINT="./tokenizer/checkpoints/maetok_pretrained/mae_best_model.pth"
 
 # Fine-tuning parameters
-BATCH_SIZE=128
-EPOCHS=50
+BATCH_SIZE=2
+EPOCHS=1
 LEARNING_RATE=5e-5  # A smaller LR is common for fine-tuning
 MASK_RATIO=0.75
 

@@ -5,12 +5,12 @@
 
 # --- Configuration ---
 # Path to your prepared ImageNet dataset (created by prepare_imagenet.py)
-DATA_PATH="/path/to/your/prepared/imagenet"
+DATA_PATH="/root/PapersImplementation/Masked_Autoencoders_Are_Effective_Tokenizers_for_Diffusion_Models/data/imagenet_prepared"
 
 # Training parameters
 RESOLUTION=256
-BATCH_SIZE=128
-EPOCHS=200
+BATCH_SIZE=2
+EPOCHS=1
 LEARNING_RATE=1.5e-4
 MASK_RATIO=0.75
 

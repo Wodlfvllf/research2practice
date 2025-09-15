@@ -27,17 +27,15 @@ class SiT(nn.Module):
         self.num_heads = num_heads
         self.tokenizer = tokenizer
 
-        self.x_embedder = PatchEmbed(input_size, patch_size, in_channels, hidden_size)
+        self.x_embedder = nn.Linear(tokenizer.embed_dim, hidden_size)
         self.t_embedder = TimestepEmbedder(hidden_size)
         self.y_embedder = LabelEmbedder(num_classes, hidden_size)
-        num_patches = self.x_embedder.num_patches
+        num_patches = tokenizer.num_patches
         
-        self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, hidden_size))
-
         self.blocks = nn.ModuleList([
             SiTBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)
         ])
-        self.final_layer = FinalLayer(hidden_size, patch_size, self.out_channels)
+        self.final_layer = FinalLayer(hidden_size, patch_size, self.out_channels, tokenizer)
         self.initialize_weights()
 
     def initialize_weights(self):
@@ -48,11 +46,7 @@ class SiT(nn.Module):
                     nn.init.constant_(module.bias, 0)
         self.apply(_basic_init)
 
-        nn.init.normal_(self.pos_embed, std=0.02)
-
         nn.init.normal_(self.y_embedder.embedding_table.weight, std=0.02)
-
-        nn.init.normal_(self.x_embedder.proj.weight, std=0.02)
 
         for block in self.blocks:
             nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
@@ -63,20 +57,11 @@ class SiT(nn.Module):
         nn.init.constant_(self.final_layer.linear.weight, 0)
         nn.init.constant_(self.final_layer.linear.bias, 0)
 
-    def unpatchify(self, x):
-        c = self.out_channels
-        p = self.x_embedder.patch_size[0]
-        h = w = int(x.shape[1] ** 0.5)
-        assert h * w == x.shape[1]
-
-        x = x.reshape(shape=(x.shape[0], h, w, p, p, c))
-        x = torch.einsum('nhwpqc->nchpwq', x)
-        imgs = x.reshape(shape=(x.shape[0], c, h * p, w * p))
-        return imgs
+    
 
     def forward(self, x, t, y):
-        x = self.tokenizer.encode(x)
-        x = self.x_embedder(x) + self.pos_embed
+        x = self.tokenizer.encoder(x)
+        x = self.x_embedder(x)
         t = self.t_embedder(t)
         y = self.y_embedder(y)
         c = t + y
@@ -84,8 +69,12 @@ class SiT(nn.Module):
         for block in self.blocks:
             x = block(x, c)
 
-        x = self.final_layer(x, c)
-        x = self.unpatchify(x)
+        latents = x[:, :self.tokenizer.hidden_token_length, :]
+        patches = x[:, self.tokenizer.hidden_token_length:, :]
+        
+        patches = self.final_layer(patches, c)
+        
+        x = self.tokenizer.unpatchify(patches)
         return x
 
 class SiTBlock(nn.Module):
@@ -108,10 +97,11 @@ class SiTBlock(nn.Module):
         return x
 
 class FinalLayer(nn.Module):
-    def __init__(self, hidden_size, patch_size, out_channels):
+    def __init__(self, hidden_size, patch_size, out_channels, tokenizer):
         super().__init__()
         self.norm_final = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        self.linear = nn.Linear(hidden_size, patch_size * patch_size * out_channels, bias=True)
+        self.tokenizer = tokenizer
+        self.linear = nn.Linear(hidden_size, self.tokenizer.embed_dim, bias=True)
         self.adaLN_modulation = nn.Sequential(
             nn.SiLU(),
             nn.Linear(hidden_size, 2 * hidden_size, bias=True)
