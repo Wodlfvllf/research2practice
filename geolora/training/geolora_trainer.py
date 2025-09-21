@@ -116,3 +116,26 @@ class GeoLoRATrainer:
             'train_loss': total_loss / len(train_loader),
             'train_accuracy': 100. * correct / total
         }
+        
+    def validate(self, val_loader: DataLoader) -> Dict[str, float]:
+        """Validate the model"""
+        self.model.eval()
+        total_loss = 0.0
+        correct = 0
+        total = 0
+        
+        with torch.no_grad():
+            for data, target in val_loader:
+                data, target = data.to(self.device), target.to(self.device)
+                output = self.model(data)
+                loss = self.criterion(output, target)
+                
+                total_loss += loss.item()
+                pred = output.argmax(dim=1, keepdim=True)
+                correct += pred.eq(target.view_as(pred)).sum().item()
+                total += target.size(0)
+        
+        return {
+            'val_loss': total_loss / len(val_loader),
+            'val_accuracy': 100. * correct / total
+        }
