@@ -284,3 +284,20 @@ class GeoLoRALayer(nn.Module):
         V_new = V_aug @ Q_r
         
         return U_new, s_r, V_new, new_rank
+    
+    def _update_parameters(self, U_new: torch.Tensor, s_new: torch.Tensor, 
+                          V_new: torch.Tensor, new_rank: int):
+        """Step 10: Update layer parameters"""
+        self.current_rank = new_rank
+        
+        # Update parameters
+        self.U = nn.Parameter(U_new.clone())
+        self.V = nn.Parameter(V_new.clone())
+        self.s = nn.Parameter(s_new.clone())
+        
+        # Update cache
+        self._update_cache()
+        
+        # Re-setup optimizer if needed
+        if self.config.use_small_matrix_optimizer:
+            self._setup_small_optimizer()
