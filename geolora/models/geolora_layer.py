@@ -72,3 +72,48 @@ class GeoLoRALayer(nn.Module):
         S_diag = torch.diag(self.s)
         self.K_cache = self.U @ S_diag  # n x r
         self.L_cache = self.V @ S_diag.T  # m x r
+        
+        def _setup_small_optimizer(self):
+        """Setup optimizer for small matrices"""
+        small_params = [self.s]  # Only optimize S in coefficient updates
+        
+        if self.config.optimizer_type == "adam":
+            self.small_optimizer = torch.optim.Adam(
+                small_params, 
+                lr=self.config.learning_rate,
+                weight_decay=self.config.weight_decay
+            )
+        else:
+            self.small_optimizer = torch.optim.SGD(
+                small_params,
+                lr=self.config.learning_rate,
+                weight_decay=self.config.weight_decay
+            )
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass: y = base_layer(x) + U @ S @ V^T @ x"""
+        # Base layer output
+        if self.base_layer is not None:
+            base_out = self.base_layer(x)
+        else:
+            base_out = 0
+        
+        # LoRA adaptation: W @ x = U @ S @ V^T @ x
+        if self.current_rank > 0:
+            # Efficient computation: (U @ S) @ (V^T @ x)
+            v_x = self.V.T @ x.T  # r x batch_size
+            s_v_x = self.s.unsqueeze(1) * v_x  # r x batch_size (broadcast)
+            adaptation = self.U @ s_v_x  # n x batch_size
+            adaptation = adaptation.T  # batch_size x n
+        else:
+            adaptation = 0
+        
+        return base_out + adaptation
+    
+    def get_full_weight(self) -> torch.Tensor:
+        """Reconstruct full weight matrix W = U @ S @ V^T"""
+        if self.current_rank == 0:
+            return torch.zeros(self.out_features, self.in_features)
+        
+        S_diag = torch.diag(self.s)
+        return self.U @ S_diag @ self.V.T
