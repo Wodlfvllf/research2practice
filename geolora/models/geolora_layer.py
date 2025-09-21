@@ -244,3 +244,43 @@ class GeoLoRALayer(nn.Module):
             # S_hat[r:r+k, r:r+k] remains zero
         
         return S_hat
+    
+    def _svd_and_truncate(self, S_hat: torch.Tensor, U_tilde: torch.Tensor, V_tilde: torch.Tensor, 
+                         k_u: int, k_v: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, int]:
+        """Step 8: SVD and optimal truncation"""
+        # SVD of augmented matrix
+        U_svd, sigma, Vt_svd = torch.svd(S_hat)
+        
+        # Truncation strategy
+        if self.config.truncation_strategy == "local_threshold":
+            # Local threshold based on old S norm
+            old_s_norm_sq = torch.sum(self.s ** 2)
+            threshold = self.config.tau * old_s_norm_sq
+            keep_mask = sigma ** 2 >= threshold
+            new_rank = torch.sum(keep_mask).item()
+        elif self.config.truncation_strategy == "fixed_rank":
+            new_rank = min(self.current_rank, len(sigma))
+        else:  # global_budget - simplified to fixed rank for this implementation
+            new_rank = min(self.current_rank, len(sigma))
+        
+        new_rank = max(1, new_rank)  # Ensure at least rank 1
+        
+        # Keep top components
+        P_r = U_svd[:, :new_rank]
+        Q_r = Vt_svd[:new_rank, :].T  # Convert back to column format
+        s_r = sigma[:new_rank]
+        
+        # Map back to full size
+        # Augmented bases
+        k = min(k_u, k_v)
+        if k > 0:
+            U_aug = torch.cat([self.U, U_tilde[:, :k]], dim=1)
+            V_aug = torch.cat([self.V, V_tilde[:, :k]], dim=1)
+        else:
+            U_aug = self.U
+            V_aug = self.V
+        
+        U_new = U_aug @ P_r
+        V_new = V_aug @ Q_r
+        
+        return U_new, s_r, V_new, new_rank
