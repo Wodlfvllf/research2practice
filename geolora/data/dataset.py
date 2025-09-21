@@ -52,3 +52,39 @@ def get_dataset(dataset_name: str, data_dir: str = "./data") -> Tuple[Dataset, D
         raise ValueError(f"Unsupported dataset: {dataset_name}")
     
     return train_dataset, test_dataset
+
+def get_dataloaders(dataset_name: str, 
+                   batch_size: int = 128,
+                   data_dir: str = "./data",
+                   num_workers: int = 4) -> Tuple[DataLoader, DataLoader]:
+    """
+    Get train and test dataloaders
+    
+    Args:
+        dataset_name: Name of dataset
+        batch_size: Batch size
+        data_dir: Directory to store data
+        num_workers: Number of worker processes
+    
+    Returns:
+        train_loader, test_loader
+    """
+    train_dataset, test_dataset = get_dataset(dataset_name, data_dir)
+    
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=True
+    )
+    
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True
+    )
+    
+    return train_loader, test_loader
