@@ -139,3 +139,36 @@ class GeoLoRATrainer:
             'val_loss': total_loss / len(val_loader),
             'val_accuracy': 100. * correct / total
         }
+        
+    def train(self, train_loader: DataLoader, val_loader: Optional[DataLoader] = None, 
+              num_epochs: int = 10) -> Dict[str, Any]:
+        """Full training loop"""
+        history = {'train_loss': [], 'train_accuracy': [], 'val_loss': [], 'val_accuracy': []}
+        
+        for epoch in range(num_epochs):
+            self.logger.info(f"Epoch {epoch + 1}/{num_epochs}")
+            
+            # Training
+            train_metrics = self.train_epoch(train_loader)
+            history['train_loss'].append(train_metrics['train_loss'])
+            history['train_accuracy'].append(train_metrics['train_accuracy'])
+            
+            # Validation
+            if val_loader is not None:
+                val_metrics = self.validate(val_loader)
+                history['val_loss'].append(val_metrics['val_loss'])
+                history['val_accuracy'].append(val_metrics['val_accuracy'])
+                
+                self.logger.info(
+                    f"Train Loss: {train_metrics['train_loss']:.4f}, "
+                    f"Train Acc: {train_metrics['train_accuracy']:.2f}%, "
+                    f"Val Loss: {val_metrics['val_loss']:.4f}, "
+                    f"Val Acc: {val_metrics['val_accuracy']:.2f}%"
+                )
+            else:
+                self.logger.info(
+                    f"Train Loss: {train_metrics['train_loss']:.4f}, "
+                    f"Train Acc: {train_metrics['train_accuracy']:.2f}%"
+                )
+        
+        return history
