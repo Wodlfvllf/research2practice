@@ -117,3 +117,57 @@ class GeoLoRALayer(nn.Module):
         
         S_diag = torch.diag(self.s)
         return self.U @ S_diag @ self.V.T
+    
+    def geolora_step(self, ambient_grad: torch.Tensor, learning_rate: float):
+        """
+        Perform one GeoLoRA optimization step
+        
+        Args:
+            ambient_grad: Gradient w.r.t. full weight matrix W (n x m)
+            learning_rate: Step size λ
+        """
+        if self.current_rank == 0:
+            return  # Nothing to update
+        
+        # Step 3: Coefficient updates
+        K_new, L_new, s_new = self._coefficient_updates(ambient_grad, learning_rate)
+        
+        # Step 4-5: Compute residuals and new basis directions
+        R_U, R_V = self._compute_residuals(K_new, L_new)
+        U_tilde, V_tilde, k_u, k_v = self._orthonormalize_residuals(R_U, R_V)
+        
+        if k_u == 0 and k_v == 0:
+            # No new directions, just update coefficients
+            self.s.data = s_new
+            self._update_cache()
+            return
+        
+        # Step 6: Assemble augmented coefficient matrix
+        S_hat = self._assemble_augmented_matrix(s_new, K_new, L_new, U_tilde, V_tilde)
+        
+        # Step 8: SVD and truncation
+        U_new, s_new_truncated, V_new, new_rank = self._svd_and_truncate(
+            S_hat, U_tilde, V_tilde, k_u, k_v
+        )
+        
+        # Step 9: Update layer parameters
+        self._update_parameters(U_new, s_new_truncated, V_new, new_rank)
+    
+    def _coefficient_updates(self, G: torch.Tensor, lr: float) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Step 3: Update coefficient matrices K, L, S"""
+        # Current matrices
+        U, V = self.U, self.V
+        s_old = self.s
+        
+        # Compute updates (discrete Euler)
+        # S update: s_new = s - λ * diag(U^T @ G @ V)
+        UGV = U.T @ G @ V  # r x r
+        s_new = s_old - lr * torch.diag(UGV)
+        
+        # K update: K_new = K - λ * (G @ V)
+        K_new = self.K_cache - lr * (G @ V)  # n x r
+        
+        # L update: L_new = L - λ * (G^T @ U)
+        L_new = self.L_cache - lr * (G.T @ U)  # m x r
+        
+        return K_new, L_new, s_new
