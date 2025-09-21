@@ -218,3 +218,29 @@ class GeoLoRALayer(nn.Module):
         
         return U_tilde, V_tilde, k_u, k_v
     
+    def _assemble_augmented_matrix(self, s_new: torch.Tensor, K_new: torch.Tensor, L_new: torch.Tensor,
+                                 U_tilde: torch.Tensor, V_tilde: torch.Tensor) -> torch.Tensor:
+        """Step 6: Assemble small augmented coefficient matrix S_hat"""
+        r = self.current_rank
+        k_u, k_v = U_tilde.shape[1], V_tilde.shape[1]
+        k = min(k_u, k_v)  # Assume square augmentation for simplicity
+        
+        r_aug = r + k
+        S_hat = torch.zeros(r_aug, r_aug)
+        
+        # TL block: S_new (diagonal)
+        S_hat[:r, :r] = torch.diag(s_new)
+        
+        if k > 0:
+            # TR block: L_new^T @ V_tilde
+            if V_tilde.shape[1] > 0:
+                S_hat[:r, r:r+k] = L_new.T @ V_tilde[:, :k]
+            
+            # BL block: U_tilde^T @ K_new
+            if U_tilde.shape[1] > 0:
+                S_hat[r:r+k, :r] = U_tilde[:, :k].T @ K_new
+            
+            # BR block: zeros (or could compute U_tilde^T @ W_approx @ V_tilde)
+            # S_hat[r:r+k, r:r+k] remains zero
+        
+        return S_hat
