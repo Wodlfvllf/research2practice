@@ -171,3 +171,16 @@ class GeoLoRALayer(nn.Module):
         L_new = self.L_cache - lr * (G.T @ U)  # m x r
         
         return K_new, L_new, s_new
+    
+    def _compute_residuals(self, K_new: torch.Tensor, L_new: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Step 4: Compute residuals orthogonal to current bases"""
+        U, V = self.U, self.V
+        
+        # Project out components in current bases
+        C_U = U.T @ K_new  # r x r
+        R_U = K_new - U @ C_U  # n x r
+        
+        C_V = V.T @ L_new  # r x r
+        R_V = L_new - V @ C_V  # m x r
+        
+        return R_U, R_V
