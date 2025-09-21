@@ -72,3 +72,47 @@ class GeoLoRATrainer:
         term3 = layer.U @ S_diag @ layer.V.grad.T
         
         return term1 + term2 + term3
+    
+    def train_epoch(self, train_loader: DataLoader) -> Dict[str, float]:
+        """Train one epoch using GeoLoRA"""
+        self.model.train()
+        total_loss = 0.0
+        correct = 0
+        total = 0
+        
+        pbar = tqdm(train_loader, desc="Training")
+        
+        for batch_idx, (data, target) in enumerate(pbar):
+            data, target = data.to(self.device), target.to(self.device)
+            
+            # Standard forward-backward pass
+            self.base_optimizer.zero_grad()
+            
+            output = self.model(data)
+            loss = self.criterion(output, target)
+            
+            # Backward pass
+            loss.backward()
+            
+            # Perform GeoLoRA steps for all layers
+            self.model.perform_geolora_step(self.config.learning_rate)
+            
+            # Update base parameters
+            self.base_optimizer.step()
+            
+            # Statistics
+            total_loss += loss.item()
+            pred = output.argmax(dim=1, keepdim=True)
+            correct += pred.eq(target.view_as(pred)).sum().item()
+            total += target.size(0)
+            
+            # Update progress bar
+            pbar.set_postfix({
+                'Loss': f'{loss.item():.4f}',
+                'Acc': f'{100. * correct / total:.2f}%'
+            })
+        
+        return {
+            'train_loss': total_loss / len(train_loader),
+            'train_accuracy': 100. * correct / total
+        }
