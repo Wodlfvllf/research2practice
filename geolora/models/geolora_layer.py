@@ -184,3 +184,37 @@ class GeoLoRALayer(nn.Module):
         R_V = L_new - V @ C_V  # m x r
         
         return R_U, R_V
+    
+    def _orthonormalize_residuals(self, R_U: torch.Tensor, R_V: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, int, int]:
+        """Step 5: QR decomposition and column selection"""
+        # QR decomposition of residuals
+        Q_U, R_U_tri = torch.qr(R_U) if R_U.numel() > 0 else (torch.empty(R_U.shape[0], 0), torch.empty(0, R_U.shape[1]))
+        Q_V, R_V_tri = torch.qr(R_V) if R_V.numel() > 0 else (torch.empty(R_V.shape[0], 0), torch.empty(0, R_V.shape[1]))
+        
+        # Column selection based on norms
+        max_new_cols = self.config.max_new_cols or self.current_rank
+        
+        # For U
+        if Q_U.shape[1] > 0:
+            col_norms_U = torch.norm(R_U, dim=0)
+            threshold_U = self.config.epsilon_resid * torch.max(torch.norm(self.K_cache, dim=0))
+            valid_cols_U = col_norms_U > threshold_U
+            k_u = min(torch.sum(valid_cols_U).item(), max_new_cols)
+            U_tilde = Q_U[:, :k_u] if k_u > 0 else torch.empty(Q_U.shape[0], 0)
+        else:
+            k_u = 0
+            U_tilde = torch.empty(R_U.shape[0], 0)
+        
+        # For V
+        if Q_V.shape[1] > 0:
+            col_norms_V = torch.norm(R_V, dim=0)
+            threshold_V = self.config.epsilon_resid * torch.max(torch.norm(self.L_cache, dim=0))
+            valid_cols_V = col_norms_V > threshold_V
+            k_v = min(torch.sum(valid_cols_V).item(), max_new_cols)
+            V_tilde = Q_V[:, :k_v] if k_v > 0 else torch.empty(Q_V.shape[0], 0)
+        else:
+            k_v = 0
+            V_tilde = torch.empty(R_V.shape[0], 0)
+        
+        return U_tilde, V_tilde, k_u, k_v
+    
