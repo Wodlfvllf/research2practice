@@ -3,13 +3,14 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 from torchvision import datasets, transforms
 from typing import Tuple, Optional
+from .qa_dataset import QADataset
 
-def get_dataset(dataset_name: str, data_dir: str = "./data") -> Tuple[Dataset, Dataset]:
+def get_dataset(dataset_name: str, data_dir: str = "./data", tokenizer=None, num_samples=100) -> Tuple[Dataset, Dataset]:
     """
     Get train and test datasets
     
     Args:
-        dataset_name: Name of dataset ("mnist", "cifar10", etc.)
+        dataset_name: Name of dataset ("mnist", "cifar10", "qa")
         data_dir: Directory to store data
     
     Returns:
@@ -47,7 +48,11 @@ def get_dataset(dataset_name: str, data_dir: str = "./data") -> Tuple[Dataset, D
         test_dataset = datasets.CIFAR10(
             data_dir, train=False, download=True, transform=transform_test
         )
-        
+
+    elif dataset_name.lower() == "qa":
+        train_dataset = QADataset(num_samples=num_samples)
+        test_dataset = QADataset(num_samples=num_samples // 5)
+
     else:
         raise ValueError(f"Unsupported dataset: {dataset_name}")
     
@@ -56,7 +61,8 @@ def get_dataset(dataset_name: str, data_dir: str = "./data") -> Tuple[Dataset, D
 def get_dataloaders(dataset_name: str, 
                    batch_size: int = 128,
                    data_dir: str = "./data",
-                   num_workers: int = 4) -> Tuple[DataLoader, DataLoader]:
+                   num_workers: int = 4,
+                   tokenizer = None) -> Tuple[DataLoader, DataLoader]:
     """
     Get train and test dataloaders
     
@@ -69,22 +75,48 @@ def get_dataloaders(dataset_name: str,
     Returns:
         train_loader, test_loader
     """
-    train_dataset, test_dataset = get_dataset(dataset_name, data_dir)
+    if dataset_name == "qa":
+        train_dataset, test_dataset = get_dataset(dataset_name, data_dir, tokenizer=tokenizer)
+
+        def collate_fn(batch):
+            questions = [item['question'] for item in batch]
+            answers = [item['answer'] for item in batch]
+            inputs = tokenizer(questions, answers, return_tensors='pt', padding=True, truncation=True)
+            return inputs
+
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=num_workers,
+            collate_fn=collate_fn
+        )
     
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=num_workers,
-        pin_memory=True
-    )
-    
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=True
-    )
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            collate_fn=collate_fn
+        )
+
+    else:
+        train_dataset, test_dataset = get_dataset(dataset_name, data_dir)
+        
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=num_workers,
+            pin_memory=True
+        )
+        
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=True
+        )
     
     return train_loader, test_loader
