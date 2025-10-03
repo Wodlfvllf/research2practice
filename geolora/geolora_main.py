@@ -9,6 +9,7 @@ import logging
 import torch
 import torch.nn as nn
 from pathlib import Path
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
 from config.geolora_config import GeoLoRAConfig
 from models.geolora_model import GeoLoRAModel
@@ -58,12 +59,16 @@ def setup_logging(log_level: str = "INFO"):
         ]
     )
 
-def create_model(dataset: str, config: GeoLoRAConfig, device: str) -> GeoLoRAModel:
+def create_model(dataset: str, config: GeoLoRAConfig, device: str, tokenizer) -> GeoLoRAModel:
     """Create base model and wrap with GeoLoRA"""
     if dataset.lower() == "mnist":
         base_model = SimpleCNN(num_classes=10, input_channels=1)
     elif dataset.lower() == "cifar10":
         base_model = SimpleCNN(num_classes=10, input_channels=3)
+    elif dataset.lower() == "qa":
+        model_name = "Qwen/Qwen2-0.5B"
+        base_model = AutoModelForCausalLM.from_pretrained(model_name)
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
     else:
         raise ValueError(f"Unsupported dataset: {dataset}")
     
@@ -74,11 +79,11 @@ def create_model(dataset: str, config: GeoLoRAConfig, device: str) -> GeoLoRAMod
         target_modules=["Linear"]  # Apply GeoLoRA to linear layers
     )
     
-    return geolora_model
+    return geolora_model, tokenizer
 
 def main():
     parser = argparse.ArgumentParser(description="Train model with GeoLoRA")
-    parser.add_argument("--dataset", type=str, default="mnist", choices=["mnist", "cifar10"],
+    parser.add_argument("--dataset", type=str, default="mnist", choices=["mnist", "cifar10", "qa"],
                        help="Dataset to use")
     parser.add_argument("--batch-size", type=int, default=128, help="Batch size")
     parser.add_argument("--epochs", type=int, default=10, help="Number of epochs")
@@ -116,18 +121,19 @@ def main():
     )
     
     logger.info(f"GeoLoRA Config: {config}")
+
+    # Create model
+    logger.info("Creating model with GeoLoRA...")
+    model, tokenizer = create_model(args.dataset, config, device, None)
     
     # Load data
     logger.info(f"Loading {args.dataset} dataset...")
     train_loader, test_loader = get_dataloaders(
         args.dataset,
         batch_size=args.batch_size,
-        data_dir=args.data_dir
+        data_dir=args.data_dir,
+        tokenizer=tokenizer
     )
-    
-    # Create model
-    logger.info("Creating model with GeoLoRA...")
-    model = create_model(args.dataset, config, device)
     
     logger.info(f"Model created with {sum(p.numel() for p in model.parameters())} parameters")
     logger.info(f"GeoLoRA layers: {list(model.geolora_layers.keys())}")
