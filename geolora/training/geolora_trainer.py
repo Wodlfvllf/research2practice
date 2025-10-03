@@ -30,9 +30,6 @@ class GeoLoRATrainer:
             weight_decay=config.weight_decay
         )
         
-        # Loss function
-        self.criterion = nn.CrossEntropyLoss()
-        
         # Logging
         self.logger = logging.getLogger(__name__)
         
@@ -53,7 +50,7 @@ class GeoLoRATrainer:
         
         # Register hooks (simplified - would need proper implementation)
         for name, layer in self.model.geolora_layers.items():
-            if layer.U.grad is not None:
+            if hasattr(layer, 'U') and layer.U.grad is not None:
                 layer.U.register_hook(create_hook(name))
     
     def _reconstruct_ambient_gradient(self, layer: 'GeoLoRALayer') -> torch.Tensor:
@@ -77,19 +74,17 @@ class GeoLoRATrainer:
         """Train one epoch using GeoLoRA"""
         self.model.train()
         total_loss = 0.0
-        correct = 0
-        total = 0
         
         pbar = tqdm(train_loader, desc="Training")
         
-        for batch_idx, (data, target) in enumerate(pbar):
-            data, target = data.to(self.device), target.to(self.device)
+        for batch in pbar:
+            batch = {k: v.to(self.device) for k, v in batch.items()}
             
             # Standard forward-backward pass
             self.base_optimizer.zero_grad()
             
-            output = self.model(data)
-            loss = self.criterion(output, target)
+            outputs = self.model.base_model(**batch, labels=batch["input_ids"])
+            loss = outputs.loss
             
             # Backward pass
             loss.backward()
@@ -102,48 +97,36 @@ class GeoLoRATrainer:
             
             # Statistics
             total_loss += loss.item()
-            pred = output.argmax(dim=1, keepdim=True)
-            correct += pred.eq(target.view_as(pred)).sum().item()
-            total += target.size(0)
             
             # Update progress bar
             pbar.set_postfix({
-                'Loss': f'{loss.item():.4f}',
-                'Acc': f'{100. * correct / total:.2f}%'
+                'Loss': f'{loss.item():.4f}'
             })
         
         return {
-            'train_loss': total_loss / len(train_loader),
-            'train_accuracy': 100. * correct / total
+            'train_loss': total_loss / len(train_loader)
         }
         
     def validate(self, val_loader: DataLoader) -> Dict[str, float]:
         """Validate the model"""
         self.model.eval()
         total_loss = 0.0
-        correct = 0
-        total = 0
         
         with torch.no_grad():
-            for data, target in val_loader:
-                data, target = data.to(self.device), target.to(self.device)
-                output = self.model(data)
-                loss = self.criterion(output, target)
-                
+            for batch in val_loader:
+                batch = {k: v.to(self.device) for k, v in batch.items()}
+                outputs = self.model.base_model(**batch, labels=batch["input_ids"])
+                loss = outputs.loss
                 total_loss += loss.item()
-                pred = output.argmax(dim=1, keepdim=True)
-                correct += pred.eq(target.view_as(pred)).sum().item()
-                total += target.size(0)
         
         return {
-            'val_loss': total_loss / len(val_loader),
-            'val_accuracy': 100. * correct / total
+            'val_loss': total_loss / len(val_loader)
         }
         
     def train(self, train_loader: DataLoader, val_loader: Optional[DataLoader] = None, 
               num_epochs: int = 10) -> Dict[str, Any]:
         """Full training loop"""
-        history = {'train_loss': [], 'train_accuracy': [], 'val_loss': [], 'val_accuracy': []}
+        history = {'train_loss': [], 'val_loss': []}
         
         for epoch in range(num_epochs):
             self.logger.info(f"Epoch {epoch + 1}/{num_epochs}")
@@ -151,24 +134,19 @@ class GeoLoRATrainer:
             # Training
             train_metrics = self.train_epoch(train_loader)
             history['train_loss'].append(train_metrics['train_loss'])
-            history['train_accuracy'].append(train_metrics['train_accuracy'])
             
             # Validation
             if val_loader is not None:
                 val_metrics = self.validate(val_loader)
                 history['val_loss'].append(val_metrics['val_loss'])
-                history['val_accuracy'].append(val_metrics['val_accuracy'])
                 
                 self.logger.info(
                     f"Train Loss: {train_metrics['train_loss']:.4f}, "
-                    f"Train Acc: {train_metrics['train_accuracy']:.2f}%, "
-                    f"Val Loss: {val_metrics['val_loss']:.4f}, "
-                    f"Val Acc: {val_metrics['val_accuracy']:.2f}%"
+                    f"Val Loss: {val_metrics['val_loss']:.4f}"
                 )
             else:
                 self.logger.info(
-                    f"Train Loss: {train_metrics['train_loss']:.4f}, "
-                    f"Train Acc: {train_metrics['train_accuracy']:.2f}%"
+                    f"Train Loss: {train_metrics['train_loss']:.4f}"
                 )
         
         return history
