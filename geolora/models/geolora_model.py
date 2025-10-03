@@ -22,36 +22,30 @@ class GeoLoRAModel(nn.Module):
         if target_modules is None:
             target_modules = ["linear", "Linear"]
         
-        self._add_geolora_layers(target_modules)
-        
-        # Track original forward pass
-        self._wrap_forward()
+        self._add_geolora_layers(self.base_model, target_modules)
     
-    def _add_geolora_layers(self, target_modules: List[str]):
-        """Add GeoLoRA layers to specified modules"""
-        for name, module in self.base_model.named_modules():
-            if any(target in module.__class__.__name__.lower() for target in target_modules):
-                if isinstance(module, nn.Linear):
-                    # Create GeoLoRA layer
-                    geolora_layer = GeoLoRALayer(
-                        in_features=module.in_features,
-                        out_features=module.out_features,
-                        config=self.config,
-                        base_layer=module
-                    )
-                    
-                    self.geolora_layers[name] = geolora_layer
-                    self.add_module(f"geolora_{name.replace('.', '_')}", geolora_layer)
+    def _add_geolora_layers(self, module: nn.Module, target_modules: List[str], parent_name=""):
+        """Recursively add GeoLoRA layers to specified modules"""
+        for name, child_module in module.named_children():
+            full_name = f"{parent_name}.{name}" if parent_name else name
 
-    def _wrap_forward(self):
-        """Wrap base model forward to include GeoLoRA adaptations"""
-        # This is a simplified version - in practice you'd need more sophisticated hooking
-        pass
-    
+            if any(target in child_module.__class__.__name__ for target in target_modules) and isinstance(child_module, nn.Linear):
+                # Create GeoLoRA layer
+                geolora_layer = GeoLoRALayer(
+                    in_features=child_module.in_features,
+                    out_features=child_module.out_features,
+                    config=self.config,
+                    base_layer=child_module
+                )
+                
+                self.geolora_layers[full_name] = geolora_layer
+                setattr(module, name, geolora_layer)
+
+            else:
+                self._add_geolora_layers(child_module, target_modules, full_name)
+
     def forward(self, *args, **kwargs):
         """Forward pass through base model with GeoLoRA adaptations"""
-        # For simplicity, assuming we can directly call base model
-        # In practice, you'd need to hook into intermediate layers
         return self.base_model(*args, **kwargs)
     
     def geolora_parameters(self):
